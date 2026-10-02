@@ -1,0 +1,62 @@
+version: "3.9"
+
+services:
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: alembic upgrade head
+    env_file: .env
+    depends_on:
+      sangad-postgres:
+        condition: service_healthy
+    restart: no
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    env_file: .env
+    depends_on:
+      - migrate
+      - sangad-redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: rq worker --url redis://sangad-redis:6379/0 sangad-jobs
+    env_file: .env
+    depends_on:
+      - sangad-redis
+      - migrate
+    restart: unless-stopped
+
+  openwa:
+    image: openwa/openwa:0.23.5
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      ENGINE_TYPE: baileys
+      DATABASE_TYPE: sqlite
+      DATABASE_PATH: /data/openwa.sqlite
+      WEBHOOK_URL: http://api:8001/internal/v1/channels/whatsapp/webhook
+      WEBHOOK_SECRET: ${OPENWA_WEBHOOK_SECRET}
+      API_KEY: ${OPENWA_API_KEY}
+      SESSION_NAME: sangad-gateway
+    volumes:
+      - openwa-data:/data
+    restart: unless-stopped
+
+volumes:
+  openwa-data:
